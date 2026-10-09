@@ -28,6 +28,7 @@ import com.hackpuntes.fridagate.ui.dashboard.DashboardScreen
 import com.hackpuntes.fridagate.ui.extras.ExtrasScreen
 import com.hackpuntes.fridagate.ui.frida.FridaScreen
 import com.hackpuntes.fridagate.ui.proxy.ProxyScreen
+import com.hackpuntes.fridagate.ui.scripts.ScriptsScreen
 import com.hackpuntes.fridagate.ui.theme.FridagateTheme
 
 /**
@@ -82,6 +83,7 @@ object Routes {
     const val FRIDA     = "frida"
     const val PROXY     = "proxy"
     const val EXTRAS    = "extras"
+    const val SCRIPTS   = "scripts"
     const val ABOUT     = "about"
 }
 
@@ -125,6 +127,7 @@ fun FridagateApp(isDarkTheme: Boolean = true, onToggleTheme: () -> Unit = {}) {
         BottomNavItem(Routes.FRIDA,     "Frida",     Icons.Default.Star),
         BottomNavItem(Routes.PROXY,     "Proxy",     Icons.Default.Settings),
         BottomNavItem(Routes.EXTRAS,    "Extras",    Icons.Default.Build),
+        BottomNavItem(Routes.SCRIPTS,   "Scripts",   Icons.Default.Code),
         BottomNavItem(Routes.ABOUT,     "About",     Icons.Default.Info)
     )
 
@@ -200,6 +203,7 @@ fun FridagateApp(isDarkTheme: Boolean = true, onToggleTheme: () -> Unit = {}) {
             composable(Routes.FRIDA)     { FridaScreen() }
             composable(Routes.PROXY)     { ProxyScreen() }
             composable(Routes.EXTRAS)    { ExtrasScreen() }
+            composable(Routes.SCRIPTS)   { ScriptsScreen() }
             composable(Routes.ABOUT)     { AboutScreen() }
         }
     }
