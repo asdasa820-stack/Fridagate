@@ -155,7 +155,7 @@ private fun ScriptListView(viewModel: ScriptsViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(48.dp),
+                    Icon(Icons.Default.Science, contentDescription = null, modifier = Modifier.size(48.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("No scripts yet", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -234,7 +234,7 @@ private fun ScriptListItem(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.Terminal, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+        Icon(Icons.Default.Science, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -268,7 +268,7 @@ private fun ScriptListItem(
                 )
                 DropdownMenuItem(
                     text = { Text("Rename") },
-                    leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                     onClick = { showMenu = false; onRename() }
                 )
                 DropdownMenuItem(
@@ -671,7 +671,7 @@ private fun ImportDialog(
                             onClick = { onImport(path) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Science, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(name, style = MaterialTheme.typography.bodyMedium)
                         }
