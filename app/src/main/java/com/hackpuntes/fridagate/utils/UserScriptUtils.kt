@@ -101,12 +101,79 @@ Java.perform(function () {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Import scripts from /sdcard/Download/
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Lists .js files in /sdcard/Download/ accessible via root */
+    suspend fun listDownloadableScripts(): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val out = RootUtils.executeSuCommand("ls /sdcard/Download/*.js 2>/dev/null")
+            if (out.isBlank() || out.contains("No such file")) emptyList()
+            else out.lines()
+                .map { it.trim() }
+                .filter { it.endsWith(".js") && it.isNotBlank() }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /**
+     * Copies a .js file from /sdcard/Download/ into the app's scripts folder.
+     * Returns the new File, or null if it already exists / failed.
+     */
+    suspend fun importFromDownloads(context: Context, downloadPath: String): File? =
+        withContext(Dispatchers.IO) {
+            val fileName = downloadPath.substringAfterLast("/")
+            val dest = File(scriptsDir(context), fileName)
+            if (dest.exists()) return@withContext null   // already imported
+            try {
+                RootUtils.executeSuCommand("cp $downloadPath ${dest.absolutePath}")
+                RootUtils.executeSuCommand("chmod 644 ${dest.absolutePath}")
+                if (dest.exists() && dest.length() > 0) dest else null
+            } catch (e: Exception) { null }
+        }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // List running processes (frida-ps equivalent)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    data class RunningProcess(val pid: String, val name: String, val packageName: String)
+
+    /**
+     * Returns user-space processes via `ps -A`.
+     * Skips kernel threads (no package) and system_server noise.
+     */
+    suspend fun listRunningProcesses(): List<RunningProcess> = withContext(Dispatchers.IO) {
+        try {
+            val out = RootUtils.executeSuCommand("ps -A -o PID,NAME 2>/dev/null || ps -A")
+            if (out.isBlank()) return@withContext emptyList()
+
+            val pm = null // we don't need PackageManager here
+            out.lines()
+                .drop(1)                          // skip header
+                .mapNotNull { line ->
+                    val parts = line.trim().split("\\s+".toRegex())
+                    if (parts.size < 2) return@mapNotNull null
+                    val pid  = parts[0]
+                    val name = parts.last()
+                    if (!pid.all { it.isDigit() }) return@mapNotNull null
+                    // Only keep entries that look like app packages (contain a dot)
+                    if (!name.contains(".")) return@mapNotNull null
+                    // Skip obvious system noise
+                    if (name.startsWith("kworker") || name.startsWith("[")) return@mapNotNull null
+                    RunningProcess(pid = pid, name = name, packageName = name)
+                }
+                .distinctBy { it.packageName }
+                .sortedBy { it.name }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Inject via frida-inject
     // ─────────────────────────────────────────────────────────────────────────
 
     private const val INJECT_LOG = "/data/local/tmp/fridagate_user_inject.log"
     private var injectedPid: String? = null
 
+    /** SPAWN mode: kills app first, then launches with -f (fresh start) */
     suspend fun injectScript(
         file: File,
         packageName: String,
@@ -159,6 +226,58 @@ Java.perform(function () {
             true
         } else {
             onLog("Process not found — is frida-server running?")
+            false
+        }
+    }
+
+    /** ATTACH mode: hooks into an already-running process with -n (no kill/spawn) */
+    suspend fun attachScript(
+        file: File,
+        packageName: String,
+        onLog: (String) -> Unit
+    ): Boolean = withContext(Dispatchers.IO) {
+        val injectBin = FridaInjectUtils.INJECT_BINARY_PATH
+        val check = RootUtils.executeSuCommand("ls $injectBin")
+        if (!check.contains("frida-inject") || check.contains("No such file")) {
+            onLog("ERROR: frida-inject not installed — go to Extras tab and download it")
+            return@withContext false
+        }
+
+        val tmpPath = deployToTmp(file)
+        if (tmpPath == null) {
+            onLog("ERROR: Could not copy script to /data/local/tmp/")
+            return@withContext false
+        }
+        onLog("Script deployed → $tmpPath")
+
+        val pid = findPid(packageName)
+        if (pid == null) {
+            onLog("ERROR: $packageName is not running — use Spawn mode instead")
+            return@withContext false
+        }
+        onLog("Found $packageName (PID $pid) — attaching...")
+
+        RootUtils.executeSuCommand("rm -f $INJECT_LOG")
+        // -n = attach by name (process must already be running)
+        val cmd = "$injectBin -n $packageName -s $tmpPath -e > $INJECT_LOG 2>&1 &"
+        try {
+            Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+        } catch (e: Exception) {
+            onLog("ERROR launching frida-inject: ${e.message}")
+            return@withContext false
+        }
+
+        Thread.sleep(3000)
+        val log = RootUtils.executeSuCommand("cat $INJECT_LOG").trim()
+        if (log.isNotEmpty()) log.lines().filter { it.isNotBlank() }.forEach { onLog("  $it") }
+
+        val stillRunning = findPid(packageName)
+        return@withContext if (stillRunning != null) {
+            injectedPid = stillRunning
+            onLog("✓ Attached to $packageName (PID $stillRunning)")
+            true
+        } else {
+            onLog("Process disappeared after attach — script may have crashed the app")
             false
         }
     }

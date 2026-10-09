@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hackpuntes.fridagate.utils.UserScriptUtils
+import com.hackpuntes.fridagate.utils.RootUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -46,6 +47,12 @@ class ScriptsViewModel(private val context: Context) : ViewModel() {
     private val _isInjected = MutableStateFlow(false)
     val isInjected: StateFlow<Boolean> = _isInjected.asStateFlow()
 
+    /** Spawn = kill+relaunch (-f), Attach = hook running process (-n) */
+    private val _injectMode = MutableStateFlow(InjectMode.SPAWN)
+    val injectMode: StateFlow<InjectMode> = _injectMode.asStateFlow()
+
+    enum class InjectMode { SPAWN, ATTACH }
+
     /** Target package for injection */
     private val _targetPackage = MutableStateFlow("")
     val targetPackage: StateFlow<String> = _targetPackage.asStateFlow()
@@ -53,6 +60,20 @@ class ScriptsViewModel(private val context: Context) : ViewModel() {
     /** Installed (non-system) apps for the dropdown */
     private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
     val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
+
+    /** Running processes from ps (for attach mode) */
+    private val _runningProcesses = MutableStateFlow<List<UserScriptUtils.RunningProcess>>(emptyList())
+    val runningProcesses: StateFlow<List<UserScriptUtils.RunningProcess>> = _runningProcesses.asStateFlow()
+
+    private val _isLoadingProcesses = MutableStateFlow(false)
+    val isLoadingProcesses: StateFlow<Boolean> = _isLoadingProcesses.asStateFlow()
+
+    /** .js files found in /sdcard/Download/ */
+    private val _downloadableScripts = MutableStateFlow<List<String>>(emptyList())
+    val downloadableScripts: StateFlow<List<String>> = _downloadableScripts.asStateFlow()
+
+    private val _showImportDialog = MutableStateFlow(false)
+    val showImportDialog: StateFlow<Boolean> = _showImportDialog.asStateFlow()
 
     /** Show rename/new-name dialog */
     private val _showRenameDialog = MutableStateFlow<File?>(null)
@@ -189,8 +210,18 @@ class ScriptsViewModel(private val context: Context) : ViewModel() {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun setTargetPackage(pkg: String) { _targetPackage.value = pkg }
+    fun setInjectMode(mode: InjectMode) { _injectMode.value = mode }
 
-    /** Save (if dirty) then inject the selected script */
+    fun refreshProcesses() {
+        viewModelScope.launch {
+            _isLoadingProcesses.value = true
+            _runningProcesses.value = UserScriptUtils.listRunningProcesses()
+            _isLoadingProcesses.value = false
+            addLog("Refreshed process list (${_runningProcesses.value.size} found)")
+        }
+    }
+
+    /** Save (if dirty) then inject/attach the selected script */
     fun injectScript(file: File) {
         val pkg = _targetPackage.value.trim()
         if (pkg.isEmpty()) { addLog("ERROR: Select a target app first"); return }
@@ -205,8 +236,14 @@ class ScriptsViewModel(private val context: Context) : ViewModel() {
                 addLog("Auto-saved ${file.name}")
             }
 
-            addLog("Injecting ${file.name} → $pkg ...")
-            val ok = UserScriptUtils.injectScript(file, pkg) { line -> addLog(line) }
+            val mode = _injectMode.value
+            addLog("${if (mode == InjectMode.SPAWN) "Spawning" else "Attaching"} ${file.name} → $pkg ...")
+
+            val ok = if (mode == InjectMode.SPAWN) {
+                UserScriptUtils.injectScript(file, pkg) { line -> addLog(line) }
+            } else {
+                UserScriptUtils.attachScript(file, pkg) { line -> addLog(line) }
+            }
             _isInjected.value = ok
 
             if (ok) startPolling()
@@ -220,6 +257,35 @@ class ScriptsViewModel(private val context: Context) : ViewModel() {
             stopPolling()
             UserScriptUtils.stopInjection(pkg) { line -> addLog(line) }
             _isInjected.value = false
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Import from Downloads
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun showImportDialog() {
+        viewModelScope.launch {
+            _downloadableScripts.value = UserScriptUtils.listDownloadableScripts()
+            _showImportDialog.value = true
+        }
+    }
+
+    fun dismissImportDialog() { _showImportDialog.value = false }
+
+    fun importScript(downloadPath: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val file = UserScriptUtils.importFromDownloads(context, downloadPath)
+            if (file != null) {
+                loadScripts()
+                addLog("Imported ${file.name} ✓")
+                openScript(file)
+            } else {
+                addLog("ERROR: File already exists or import failed")
+            }
+            _showImportDialog.value = false
+            _isLoading.value = false
         }
     }
 

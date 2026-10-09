@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hackpuntes.fridagate.utils.UserScriptUtils
 import java.io.File
 
 @Composable
@@ -43,9 +44,11 @@ fun ScriptsScreen() {
         }
     )
 
-    val openFile        by viewModel.openFile.collectAsState()
-    val showNewDialog   by viewModel.showNewDialog.collectAsState()
-    val showRenameFile  by viewModel.showRenameDialog.collectAsState()
+    val openFile         by viewModel.openFile.collectAsState()
+    val showNewDialog    by viewModel.showNewDialog.collectAsState()
+    val showRenameFile   by viewModel.showRenameDialog.collectAsState()
+    val showImportDialog by viewModel.showImportDialog.collectAsState()
+    val downloadScripts  by viewModel.downloadableScripts.collectAsState()
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
     if (showNewDialog) {
@@ -65,6 +68,14 @@ fun ScriptsScreen() {
             confirmText = "Rename",
             onConfirm   = { viewModel.renameScript(file, it) },
             onDismiss   = { viewModel.dismissRenameDialog() }
+        )
+    }
+
+    if (showImportDialog) {
+        ImportDialog(
+            files     = downloadScripts,
+            onImport  = { viewModel.importScript(it) },
+            onDismiss = { viewModel.dismissImportDialog() }
         )
     }
 
@@ -89,14 +100,17 @@ fun ScriptsScreen() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScriptListView(viewModel: ScriptsViewModel) {
-    val scripts       by viewModel.scripts.collectAsState()
-    val isLoading     by viewModel.isLoading.collectAsState()
-    val logs          by viewModel.logs.collectAsState()
-    val targetPackage by viewModel.targetPackage.collectAsState()
-    val installedApps by viewModel.installedApps.collectAsState()
-    val isInjected    by viewModel.isInjected.collectAsState()
+    val scripts            by viewModel.scripts.collectAsState()
+    val isLoading          by viewModel.isLoading.collectAsState()
+    val logs               by viewModel.logs.collectAsState()
+    val targetPackage      by viewModel.targetPackage.collectAsState()
+    val installedApps      by viewModel.installedApps.collectAsState()
+    val isInjected         by viewModel.isInjected.collectAsState()
+    val injectMode         by viewModel.injectMode.collectAsState()
+    val runningProcesses   by viewModel.runningProcesses.collectAsState()
+    val isLoadingProcesses by viewModel.isLoadingProcesses.collectAsState()
 
-    var exportMsg     by remember { mutableStateOf<String?>(null) }
+    var exportMsg          by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
@@ -107,18 +121,30 @@ private fun ScriptListView(viewModel: ScriptsViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Scripts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Button(onClick = { viewModel.showNewDialog() }) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("New")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { viewModel.showImportDialog() }) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Import")
+                }
+                Button(onClick = { viewModel.showNewDialog() }) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New")
+                }
             }
         }
 
-        // Target app selector
+        // Target app + mode selector
         TargetAppCard(
-            apps = installedApps,
-            selected = targetPackage,
-            onSelect = { viewModel.setTargetPackage(it) }
+            apps               = installedApps,
+            selected           = targetPackage,
+            injectMode         = injectMode,
+            runningProcesses   = runningProcesses,
+            isLoadingProcesses = isLoadingProcesses,
+            onSelect           = { viewModel.setTargetPackage(it) },
+            onModeChange       = { viewModel.setInjectMode(it) },
+            onRefreshProcesses = { viewModel.refreshProcesses() }
         )
 
         // Script list
@@ -420,49 +446,113 @@ private fun MiniConsole(logs: List<String>, onClear: () -> Unit, onExport: () ->
 private fun TargetAppCard(
     apps: List<ScriptsViewModel.AppInfo>,
     selected: String,
-    onSelect: (String) -> Unit
+    injectMode: ScriptsViewModel.InjectMode,
+    runningProcesses: List<UserScriptUtils.RunningProcess>,
+    isLoadingProcesses: Boolean,
+    onSelect: (String) -> Unit,
+    onModeChange: (ScriptsViewModel.InjectMode) -> Unit,
+    onRefreshProcesses: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expandedApps by remember { mutableStateOf(false) }
+    var expandedProcs by remember { mutableStateOf(false) }
     val displayName = apps.firstOrNull { it.packageName == selected }?.name ?: selected
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
             Text("Target App", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-                OutlinedTextField(
-                    value = if (selected.isEmpty()) "" else if (displayName != selected) "$displayName\n$selected" else selected,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Select app to hook") },
-                    placeholder = { Text("No app selected") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                    modifier = Modifier
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true)
-                        .fillMaxWidth(),
-                    maxLines = 2,
-                    textStyle = MaterialTheme.typography.bodyMedium
-                )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                    modifier = Modifier.heightIn(max = 300.dp)
-                ) {
-                    if (apps.isEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("Loading apps…", style = MaterialTheme.typography.bodySmall) },
-                            onClick = {}
-                        )
-                    } else {
-                        apps.forEach { app ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                        Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { onSelect(app.packageName); expanded = false }
-                            )
+
+            // ── Mode toggle ────────────────────────────────────────────────────
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    ScriptsViewModel.InjectMode.SPAWN  to "⚡ Spawn",
+                    ScriptsViewModel.InjectMode.ATTACH to "🔗 Attach"
+                ).forEach { (mode, label) ->
+                    FilterChip(
+                        selected = injectMode == mode,
+                        onClick  = { onModeChange(mode) },
+                        label    = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            Text(
+                text = if (injectMode == ScriptsViewModel.InjectMode.SPAWN)
+                    "Spawn: kills the app and relaunches it with the script from the start"
+                else
+                    "Attach: hooks into the app while it's already running (no restart)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // ── App dropdown (Spawn) ───────────────────────────────────────────
+            if (injectMode == ScriptsViewModel.InjectMode.SPAWN) {
+                ExposedDropdownMenuBox(expanded = expandedApps, onExpandedChange = { expandedApps = !expandedApps }) {
+                    OutlinedTextField(
+                        value = if (selected.isEmpty()) "" else if (displayName != selected) "$displayName\n$selected" else selected,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Select app") },
+                        placeholder = { Text("No app selected") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedApps) },
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true).fillMaxWidth(),
+                        maxLines = 2,
+                        textStyle = MaterialTheme.typography.bodyMedium
+                    )
+                    ExposedDropdownMenu(expanded = expandedApps, onDismissRequest = { expandedApps = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                        if (apps.isEmpty()) {
+                            DropdownMenuItem(text = { Text("Loading…", style = MaterialTheme.typography.bodySmall) }, onClick = {})
+                        } else {
+                            apps.forEach { app ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                            Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { onSelect(app.packageName); expandedApps = false }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ── Running processes (Attach) ─────────────────────────────────
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text("Running processes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    IconButton(onClick = onRefreshProcesses, enabled = !isLoadingProcesses, modifier = Modifier.size(32.dp)) {
+                        if (isLoadingProcesses) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                ExposedDropdownMenuBox(expanded = expandedProcs, onExpandedChange = { expandedProcs = !expandedProcs }) {
+                    OutlinedTextField(
+                        value = selected.ifEmpty { "" },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Select running process") },
+                        placeholder = { Text("Tap Refresh first") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedProcs) },
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true).fillMaxWidth(),
+                        textStyle = MaterialTheme.typography.bodyMedium
+                    )
+                    ExposedDropdownMenu(expanded = expandedProcs, onDismissRequest = { expandedProcs = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                        if (runningProcesses.isEmpty()) {
+                            DropdownMenuItem(text = { Text("No processes — tap Refresh ↑", style = MaterialTheme.typography.bodySmall) }, onClick = {})
+                        } else {
+                            runningProcesses.forEach { proc ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(proc.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                            Text("PID ${proc.pid}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = { onSelect(proc.packageName); expandedProcs = false }
+                                )
+                            }
                         }
                     }
                 }
@@ -553,6 +643,46 @@ private fun NameDialog(
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ImportDialog(
+    files: List<String>,
+    onImport: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import from Downloads") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (files.isEmpty()) {
+                    Text(
+                        "No .js files found in /sdcard/Download/\n\nCopy your script there and try again.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text("Tap a file to import it:", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    files.forEach { path ->
+                        val name = path.substringAfterLast("/")
+                        OutlinedButton(
+                            onClick = { onImport(path) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(name, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
 
 private fun formatFileSize(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
