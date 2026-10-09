@@ -127,7 +127,7 @@ fun FridagateApp(isDarkTheme: Boolean = true, onToggleTheme: () -> Unit = {}) {
         BottomNavItem(Routes.FRIDA,     "Frida",     Icons.Default.Star),
         BottomNavItem(Routes.PROXY,     "Proxy",     Icons.Default.Settings),
         BottomNavItem(Routes.EXTRAS,    "Extras",    Icons.Default.Build),
-        BottomNavItem(Routes.SCRIPTS,   "Scripts",   Icons.Default.Code),
+        BottomNavItem(Routes.SCRIPTS,   "Scripts",   Icons.Default.Terminal),
         BottomNavItem(Routes.ABOUT,     "About",     Icons.Default.Info)
     )
 
